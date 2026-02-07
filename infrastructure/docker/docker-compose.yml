@@ -1,0 +1,194 @@
+version: '3.9'
+
+services:
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: seesea-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ../nginx/nginx-dev.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api-go
+      - api-python
+    restart: unless-stopped
+    networks:
+      - seesea-network
+
+  # Go API (High-performance queries)
+  api-go:
+    build:
+      context: ../../api-go
+      dockerfile: Dockerfile
+    container_name: seesea-api-go
+    ports:
+      - "8080:8080"
+    environment:
+      - GIN_MODE=release
+      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD}@postgres:5432/seesea
+      - CLICKHOUSE_URL=http://clickhouse:8123
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - clickhouse
+      - redis
+    restart: unless-stopped
+    networks:
+      - seesea-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Python API (Analytics)
+  api-python:
+    build:
+      context: ../../api-python
+      dockerfile: Dockerfile
+    container_name: seesea-api-python
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD}@postgres:5432/seesea
+      - CLICKHOUSE_URL=http://clickhouse:8123
+      - REDIS_URL=redis://redis:6379
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    depends_on:
+      - postgres
+      - clickhouse
+      - redis
+    restart: unless-stopped
+    networks:
+      - seesea-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PostgreSQL + TimescaleDB
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: seesea-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=seesea
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../database/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: unless-stopped
+    networks:
+      - seesea-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d seesea"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ClickHouse
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: seesea-clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      - CLICKHOUSE_DB=seesea_analytics
+      - CLICKHOUSE_USER=admin
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ../database/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: unless-stopped
+    networks:
+      - seesea-network
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: seesea-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - seesea-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ETL Pipeline
+  etl:
+    build:
+      context: ../../etl
+      dockerfile: Dockerfile
+    container_name: seesea-etl
+    environment:
+      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD}@postgres:5432/seesea
+      - CLICKHOUSE_URL=http://clickhouse:8123
+    volumes:
+      - ../../processed:/app/processed:ro
+    depends_on:
+      - postgres
+      - clickhouse
+    restart: unless-stopped
+    networks:
+      - seesea-network
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: seesea-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
+    networks:
+      - seesea-network
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: seesea-grafana
+    ports:
+      - "3002:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - seesea-network
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  seesea-network:
+    driver: bridge
