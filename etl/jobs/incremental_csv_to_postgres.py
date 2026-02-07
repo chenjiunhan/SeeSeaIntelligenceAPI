@@ -5,6 +5,7 @@ Only processes new/updated records based on collected_at timestamp
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
+import pytz
 
 import pandas as pd
 import psycopg2
@@ -23,8 +24,8 @@ def get_last_sync_time(cursor, chokepoint):
 
     result = cursor.fetchone()[0]
     if result is None:
-        # If no data exists, sync all data
-        return datetime(2000, 1, 1)
+        # If no data exists, sync all data - return UTC-aware datetime
+        return datetime(2000, 1, 1, tzinfo=pytz.UTC)
     return result
 
 

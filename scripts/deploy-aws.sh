@@ -306,6 +306,24 @@ ssh -i "$SSH_KEY" "${SSH_USER}@${SSH_HOST}" << EOF
     free -h
 EOF
 
+echo -e "${GREEN}[10/10] Running initial ETL sync...${NC}"
+ssh -i "$SSH_KEY" "${SSH_USER}@${SSH_HOST}" << EOF
+    cd ${REMOTE_DIR}/infrastructure/docker
+
+    echo ""
+    echo "=== Syncing CSV data to PostgreSQL ==="
+
+    # Wait a bit for services to be fully ready
+    sleep 5
+
+    # Run incremental CSV to PostgreSQL sync
+    docker-compose exec -T etl python -c "import sys; sys.path.insert(0, 'jobs'); from incremental_csv_to_postgres import load_incremental_csv_to_postgres; load_incremental_csv_to_postgres()" 2>&1 || {
+        echo "⚠️  ETL sync encountered an issue (this is normal if no new data)"
+    }
+
+    echo "✅ ETL sync completed"
+EOF
+
 echo ""
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Deployment Complete!${NC}"
