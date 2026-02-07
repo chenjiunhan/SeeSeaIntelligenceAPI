@@ -1,14 +1,17 @@
 version: '3.9'
 
 services:
-  # Nginx Reverse Proxy
+  # Nginx Reverse Proxy with SSL
   nginx:
     image: nginx:alpine
     container_name: seesea-nginx
     ports:
       - "80:80"
+      - "443:443"
     volumes:
-      - ../nginx/nginx-dev.conf:/etc/nginx/nginx.conf:ro
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
     depends_on:
       - api-go
       - api-python
@@ -23,7 +26,7 @@ services:
       dockerfile: Dockerfile
     container_name: seesea-api-go
     ports:
-      - "8080:8080"
+      - "8081:8080"
     environment:
       - GIN_MODE=release
       - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD}@postgres:5432/seesea
@@ -49,7 +52,7 @@ services:
       dockerfile: Dockerfile
     container_name: seesea-api-python
     ports:
-      - "8000:8000"
+      - "8001:8000"
     environment:
       - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD}@postgres:5432/seesea
       - CLICKHOUSE_URL=http://clickhouse:8123
@@ -130,24 +133,6 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
-
-  # ETL Pipeline
-  etl:
-    build:
-      context: ../../etl
-      dockerfile: Dockerfile
-    container_name: seesea-etl
-    environment:
-      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD}@postgres:5432/seesea
-      - CLICKHOUSE_URL=http://clickhouse:8123
-    volumes:
-      - ../../processed:/app/processed:ro
-    depends_on:
-      - postgres
-      - clickhouse
-    restart: unless-stopped
-    networks:
-      - seesea-network
 
   # Prometheus
   prometheus:
