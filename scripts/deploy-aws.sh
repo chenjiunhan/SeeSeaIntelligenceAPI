@@ -68,6 +68,8 @@ ssh -i "$SSH_KEY" "${SSH_USER}@${SSH_HOST}" << EOF
         # Copy current deployment
         cp -r ${REMOTE_DIR}/api-go ${REMOTE_DIR}/backup/\${BACKUP_NAME}/ 2>/dev/null || true
         cp -r ${REMOTE_DIR}/api-python ${REMOTE_DIR}/backup/\${BACKUP_NAME}/ 2>/dev/null || true
+        cp -r ${REMOTE_DIR}/etl ${REMOTE_DIR}/backup/\${BACKUP_NAME}/ 2>/dev/null || true
+        cp -r ${REMOTE_DIR}/../SeeSeaIntelligence ${REMOTE_DIR}/backup/\${BACKUP_NAME}/ 2>/dev/null || true
         cp ${REMOTE_DIR}/infrastructure/docker/.env ${REMOTE_DIR}/backup/\${BACKUP_NAME}/ 2>/dev/null || true
 
         # Keep only last 5 backups
@@ -93,10 +95,30 @@ rsync -avz --progress \
     --exclude='.pytest_cache' \
     api-python/ "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/api-python/"
 
-# Upload Infrastructure
+# Upload ETL
+rsync -avz --progress \
+    -e "ssh -i $SSH_KEY" \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    --exclude='venv/' \
+    etl/ "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/etl/"
+
+# Upload Infrastructure (including docker-compose files)
 rsync -avz --progress \
     -e "ssh -i $SSH_KEY" \
     infrastructure/ "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/infrastructure/"
+
+# Upload SeeSeaIntelligence (Data Collector)
+echo -e "${YELLOW}Uploading SeeSeaIntelligence (Data Collector)...${NC}"
+rsync -avz --progress \
+    -e "ssh -i $SSH_KEY" \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    --exclude='venv/' \
+    --exclude='.pytest_cache' \
+    --exclude='processed/' \
+    --exclude='*.log' \
+    ../SeeSeaIntelligence/ "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/../SeeSeaIntelligence/"
 
 echo -e "${GREEN}[5/7] Installing dependencies on EC2...${NC}"
 ssh -i "$SSH_KEY" "${SSH_USER}@${SSH_HOST}" << 'EOF'
@@ -200,8 +222,8 @@ ssh -i "$SSH_KEY" "${SSH_USER}@${SSH_HOST}" << EOF
     # Pull latest images
     docker-compose pull
 
-    # Build and start services
-    docker-compose up -d --build
+    # Build and start services with production config
+    docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
     # Wait for services to be healthy
     echo "Waiting for services to start..."

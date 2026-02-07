@@ -1,7 +1,7 @@
 version: '3.9'
 
 services:
-  # Nginx Reverse Proxy with SSL
+  # Nginx Reverse Proxy
   nginx:
     image: nginx:alpine
     container_name: seesea-nginx
@@ -9,12 +9,16 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-      - /var/www/certbot:/var/www/certbot:ro
+      - ../nginx/nginx.local.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - api-go
-      - api-python
+      api-go:
+        condition: service_healthy
+      api-python:
+        condition: service_healthy
+      grafana:
+        condition: service_started
+      prometheus:
+        condition: service_started
     restart: unless-stopped
     networks:
       - seesea-network
@@ -40,10 +44,11 @@ services:
     networks:
       - seesea-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 40s
 
   # Python API (Analytics)
   api-python:
@@ -57,7 +62,7 @@ services:
       - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD}@postgres:5432/seesea
       - CLICKHOUSE_URL=http://clickhouse:8123
       - REDIS_URL=redis://redis:6379
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - AGENT_SERVER_URL=http://seesea-agent:8002
     depends_on:
       - postgres
       - clickhouse
@@ -66,10 +71,11 @@ services:
     networks:
       - seesea-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 40s
 
   # PostgreSQL + TimescaleDB
   postgres:
@@ -167,13 +173,53 @@ services:
     networks:
       - seesea-network
 
+  # Data Collector (SeeSeaIntelligence)
+  data-collector:
+    build:
+      context: ../../../SeeSeaIntelligence
+      dockerfile: Dockerfile
+    container_name: seesea-collector
+    command: ["python", "src/scheduler.py", "--start"]
+    volumes:
+      # Shared volume for CSV data
+      - csv_data:/app/processed
+    environment:
+      - OUTPUT_DIR=/app/processed
+      - TZ=Asia/Taipei
+    restart: unless-stopped
+    networks:
+      - seesea-network
+
+  # ETL Scheduler
+  etl:
+    build:
+      context: ../../etl
+      dockerfile: Dockerfile
+    container_name: seesea-etl
+    environment:
+      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD}@postgres:5432/seesea
+      - CLICKHOUSE_URL=http://clickhouse:8123
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      # Read from shared volume (read-only)
+      - csv_data:/data/processed:ro
+    depends_on:
+      - data-collector
+      - postgres
+      - clickhouse
+    restart: unless-stopped
+    networks:
+      - seesea-network
+
 volumes:
   postgres_data:
   clickhouse_data:
   redis_data:
   prometheus_data:
   grafana_data:
+  csv_data:  # Shared volume for CSV data between collector and ETL
 
 networks:
   seesea-network:
+    name: seesea-network
     driver: bridge

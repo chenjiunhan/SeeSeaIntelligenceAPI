@@ -72,12 +72,17 @@ ssh -i "$SSH_KEY" "${SSH_USER}@${SSH_HOST}" << EOF
     mkdir -p "\${ROLLBACK_BACKUP}"
     cp -r api-go "\${ROLLBACK_BACKUP}/" 2>/dev/null || true
     cp -r api-python "\${ROLLBACK_BACKUP}/" 2>/dev/null || true
+    cp -r etl "\${ROLLBACK_BACKUP}/" 2>/dev/null || true
+    cp -r ../SeeSeaIntelligence "\${ROLLBACK_BACKUP}/" 2>/dev/null || true
     cp infrastructure/docker/.env "\${ROLLBACK_BACKUP}/" 2>/dev/null || true
 
     # Restore from backup
-    rm -rf api-go api-python
-    cp -r backup/${BACKUP_NAME}/api-go .
-    cp -r backup/${BACKUP_NAME}/api-python .
+    rm -rf api-go api-python etl
+    rm -rf ../SeeSeaIntelligence
+    cp -r backup/${BACKUP_NAME}/api-go . 2>/dev/null || true
+    cp -r backup/${BACKUP_NAME}/api-python . 2>/dev/null || true
+    cp -r backup/${BACKUP_NAME}/etl . 2>/dev/null || true
+    cp -r backup/${BACKUP_NAME}/SeeSeaIntelligence ../SeeSeaIntelligence 2>/dev/null || true
     cp backup/${BACKUP_NAME}/.env infrastructure/docker/.env 2>/dev/null || true
 
     echo "Restored from backup: ${BACKUP_NAME}"
